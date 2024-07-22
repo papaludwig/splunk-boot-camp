@@ -21,4 +21,3 @@ Please work with the lab connectivity instructions for the boot camp to make sur
 12. [Drilldown](labs/12.md)
 13. [Alerts](labs/13.md)
 14. [Scheduled Reports](labs/14.md)
-15. [Putting All Together](labs/15.md)
