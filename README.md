@@ -18,6 +18,6 @@ Please work with the lab connectivity instructions for the boot camp to make sur
 9. [Search Examples III](labs/09.md)
 10. [Dashboards](labs/10.md)
 11. [Add Input Forms](labs/11.md)
-12. [Drilldown](labs/12.md)
+12. [Dashboard Interactions](labs/12.md)
 13. [Alerts](labs/13.md)
 14. [Scheduled Reports](labs/14.md)
