@@ -11,12 +11,13 @@ LOCAL_CHAIN="${HOME}/ib-fullchain.pem"
 LOCAL_KEY="${HOME}/ib-privkey.pem"
 BUILD_SCRIPT="${SCRIPT_DIR}/build-splunk-training.sh"
 
-SPLUNK_TGZ_URL="${SPLUNK_TGZ_URL:-}"
+SPLUNK_TGZ_URL="${SPLUNK_TGZ_URL:-https://download.splunk.com/products/splunk/releases/10.0.2/linux/splunk-10.0.2-e2d18b4767e9-linux-amd64.tgz}"
 SPLUNK_SERVER_NAME="${SPLUNK_SERVER_NAME:-instantbrains.com}"
 SPLUNK_WEB_PORT="${SPLUNK_WEB_PORT:-443}"
 STUDENT_USER="${STUDENT_USER:-student}"
-STUDENT_PASSWORD="${STUDENT_PASSWORD:-}"
-SPLUNK_ADMIN_PASSWORD="${SPLUNK_ADMIN_PASSWORD:-}"
+STUDENT_PASSWORD="${STUDENT_PASSWORD:-splunk}"
+SPLUNK_ADMIN_PASSWORD="${SPLUNK_ADMIN_PASSWORD:-SplunkB00tcamp}"
+BUILD_START_STEP="${BUILD_START_STEP:-1}"
 
 NO_RUN=0
 
@@ -27,6 +28,16 @@ die() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+strip_wrapping_quotes() {
+  local value="$1"
+
+  while [[ "$value" == \"*\" || "$value" == \'*\' ]]; do
+    value="${value:1:${#value}-2}"
+  done
+
+  printf '%s' "$value"
 }
 
 prompt_for_secret() {
@@ -80,12 +91,14 @@ Optional:
   --student-user USER      Student account name (default: student)
   --student-password PASS  Student password; if omitted, prompted locally
   --admin-password PASS    Splunk admin password; if omitted, prompted locally
+  --start-step STEP        Remote build step to start from, 1-10 (default: 1)
   --no-run                 Copy files but do not execute remote build script
   -h, --help               Show help
 
 Environment variable equivalents:
   SPLUNK_TGZ_URL, SPLUNK_SERVER_NAME, SPLUNK_WEB_PORT,
-  STUDENT_USER, STUDENT_PASSWORD, SPLUNK_ADMIN_PASSWORD
+  STUDENT_USER, STUDENT_PASSWORD, SPLUNK_ADMIN_PASSWORD,
+  BUILD_START_STEP
 EOF
 }
 
@@ -151,6 +164,11 @@ while [[ $# -gt 0 ]]; do
       SPLUNK_ADMIN_PASSWORD="$2"
       shift 2
       ;;
+    --start-step)
+      [[ $# -ge 2 ]] || die "--start-step requires a value"
+      BUILD_START_STEP="$2"
+      shift 2
+      ;;
     --no-run)
       NO_RUN=1
       shift
@@ -171,6 +189,10 @@ need_cmd sudo
 
 [[ -n "$EC2_HOST" ]] || die "--host is required"
 [[ -n "$SPLUNK_TGZ_URL" ]] || die "--splunk-url is required (or set SPLUNK_TGZ_URL)"
+SPLUNK_TGZ_URL="$(strip_wrapping_quotes "$SPLUNK_TGZ_URL")"
+[[ "$SPLUNK_TGZ_URL" =~ ^https?:// ]] || die "--splunk-url must start with http:// or https://"
+[[ "$BUILD_START_STEP" =~ ^[0-9]+$ ]] || die "--start-step must be an integer from 1 through 10"
+(( BUILD_START_STEP >= 1 && BUILD_START_STEP <= 10 )) || die "--start-step must be an integer from 1 through 10"
 [[ -f "$SSH_KEY" ]] || die "SSH key not found: $SSH_KEY"
 [[ -f "$LOCAL_CHAIN" ]] || die "Cert chain file not found: $LOCAL_CHAIN"
 [[ -f "$LOCAL_KEY" ]] || die "Cert key file not found: $LOCAL_KEY"
@@ -211,7 +233,7 @@ run_remote "set -euo pipefail; sudo install -d -m 700 /root; sudo install -m 600
 if [[ "$NO_RUN" -eq 1 ]]; then
   echo "Copy-only mode complete. To run later:"
   echo "  ssh -i $(quote "$SSH_KEY") ${SSH_TARGET}"
-  echo "  sudo SPLUNK_TGZ_URL=$(quote "$SPLUNK_TGZ_URL") SPLUNK_ADMIN_PASSWORD='<admin-pass>' STUDENT_PASSWORD='<student-pass>' /root/build-splunk-training.sh"
+  echo "  sudo SPLUNK_TGZ_URL=$(quote "$SPLUNK_TGZ_URL") BUILD_START_STEP=$(quote "$BUILD_START_STEP") SPLUNK_ADMIN_PASSWORD='<admin-pass>' STUDENT_PASSWORD='<student-pass>' /root/build-splunk-training.sh"
   exit 0
 fi
 
@@ -224,6 +246,7 @@ if [[ -z "$SPLUNK_ADMIN_PASSWORD" ]]; then
 fi
 
 REMOTE_BUILD_CMD="set -euo pipefail; sudo SPLUNK_TGZ_URL=$(quote "$SPLUNK_TGZ_URL") SPLUNK_SERVER_NAME=$(quote "$SPLUNK_SERVER_NAME") SPLUNK_WEB_PORT=$(quote "$SPLUNK_WEB_PORT") STUDENT_USER=$(quote "$STUDENT_USER")"
+REMOTE_BUILD_CMD="${REMOTE_BUILD_CMD} BUILD_START_STEP=$(quote "$BUILD_START_STEP")"
 REMOTE_BUILD_CMD="${REMOTE_BUILD_CMD} STUDENT_PASSWORD=$(quote "$STUDENT_PASSWORD")"
 REMOTE_BUILD_CMD="${REMOTE_BUILD_CMD} SPLUNK_ADMIN_PASSWORD=$(quote "$SPLUNK_ADMIN_PASSWORD")"
 REMOTE_BUILD_CMD="${REMOTE_BUILD_CMD} /root/build-splunk-training.sh"

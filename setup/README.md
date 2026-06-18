@@ -45,19 +45,33 @@ Useful optional flags:
 - `--student-user student`
 - `--student-password '<lab-password>'`
 - `--admin-password '<splunk-admin-password>'`
+- `--start-step 6` (resume a failed build at the Splunk download step)
 - `--no-run` (copy only)
 
-If `--admin-password` is omitted, the local wrapper prompts and confirms it before connecting.
-If `--student-password` is omitted, the local wrapper prompts and confirms it before connecting.
 The remote build script runs non-interactively once started.
 
 ## 3) What the remote build script does
 - Updates Ubuntu packages
 - Creates/updates the `student` sudo user
-- Enables password SSH auth via `/etc/ssh/sshd_config.d/99-splunk-training.conf`
+- Enables password SSH auth via `/etc/ssh/sshd_config.d/50-splunk-training.conf`
 - Installs certs with mode `600`
 - Downloads and installs Splunk
 - Configures `web.conf` and `server.conf` idempotently
 - Starts Splunk and enables boot-start
+
+## 4) Install Destinations samples
+
+After SA-Eventgen is installed and the `destinations` app exists on the Splunk
+instance, package the repo-owned sample files, copy them to the instance, install
+the samples, and move `eventgen.conf` into `local/`:
+
+```bash
+./setup/install-destinations-samples-aws.sh --host <ec2-ip-or-dns>
+```
+
+The editable source files live under
+`setup/assets/destinations-samples/samples/`. The default
+`destinations-codes.sample` intentionally repeats `200` six times to weight
+generated logs toward successful responses.
 
 After it completes, install class apps/config as needed and then create the AMI.

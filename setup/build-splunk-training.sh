@@ -22,6 +22,7 @@ SPLUNK_SERVER_NAME="${SPLUNK_SERVER_NAME:-instantbrains.com}"
 STUDENT_USER="${STUDENT_USER:-student}"
 STUDENT_PASSWORD="${STUDENT_PASSWORD:-}"
 SPLUNK_ADMIN_PASSWORD="${SPLUNK_ADMIN_PASSWORD:-}"
+BUILD_START_STEP="${BUILD_START_STEP:-1}"
 
 die() {
   echo "ERROR: $*" >&2
@@ -30,6 +31,21 @@ die() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+strip_wrapping_quotes() {
+  local value="$1"
+
+  while [[ "$value" == \"*\" || "$value" == \'*\' ]]; do
+    value="${value:1:${#value}-2}"
+  done
+
+  printf '%s' "$value"
+}
+
+should_run_step() {
+  local step="$1"
+  (( BUILD_START_STEP <= step ))
 }
 
 splunk_is_running() {
@@ -113,6 +129,7 @@ Optional environment variables:
   CERT_CHAIN_SRC, CERT_KEY_SRC, CERT_DST_DIR
   SPLUNK_HOME, SPLUNK_TGZ_PATH
   SPLUNK_WEB_PORT, SPLUNK_SERVER_NAME
+  BUILD_START_STEP (1-10; default: 1)
   STUDENT_USER, STUDENT_PASSWORD (required if STUDENT_USER is newly created)
 EOF
 }
@@ -142,95 +159,140 @@ need_cmd sshd
 [[ -n "$SPLUNK_ADMIN_PASSWORD" ]] || die "SPLUNK_ADMIN_PASSWORD is required."
 [[ "$SPLUNK_ADMIN_PASSWORD" != *$'\n'* ]] || die "SPLUNK_ADMIN_PASSWORD cannot contain newlines."
 [[ "$SPLUNK_ADMIN_PASSWORD" != *$'\r'* ]] || die "SPLUNK_ADMIN_PASSWORD cannot contain carriage returns."
+[[ "$BUILD_START_STEP" =~ ^[0-9]+$ ]] || die "BUILD_START_STEP must be an integer from 1 through 10."
+(( BUILD_START_STEP >= 1 && BUILD_START_STEP <= 10 )) || die "BUILD_START_STEP must be an integer from 1 through 10."
+SPLUNK_TGZ_URL="$(strip_wrapping_quotes "$SPLUNK_TGZ_URL")"
 if [[ "$SPLUNK_TGZ_URL" == *"path/to/splunk"* ]]; then
   die "SPLUNK_TGZ_URL still contains placeholder text."
 fi
+[[ "$SPLUNK_TGZ_URL" =~ ^https?:// ]] || die "SPLUNK_TGZ_URL must start with http:// or https://; got: $(printf '%q' "$SPLUNK_TGZ_URL")"
 
 echo "=== [1/10] OS updates (apt-get update/upgrade) ==="
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-apt-get update -y
-apt-get upgrade -y
+if should_run_step 1; then
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=a
+  apt-get update -y
+  apt-get upgrade -y
+else
+  echo "Skipping step 1 because BUILD_START_STEP=${BUILD_START_STEP}."
+fi
 
 echo "=== [2/10] Ensure '${STUDENT_USER}' exists and is sudo-enabled ==="
-STUDENT_CREATED=0
-if id "$STUDENT_USER" >/dev/null 2>&1; then
-  echo "User '${STUDENT_USER}' already exists."
-else
-  adduser --disabled-password --gecos "" "$STUDENT_USER"
-  STUDENT_CREATED=1
-fi
-usermod -aG sudo "$STUDENT_USER"
+if should_run_step 2; then
+  STUDENT_CREATED=0
+  if id "$STUDENT_USER" >/dev/null 2>&1; then
+    echo "User '${STUDENT_USER}' already exists."
+  else
+    adduser --disabled-password --gecos "" "$STUDENT_USER"
+    STUDENT_CREATED=1
+  fi
+  usermod -aG sudo "$STUDENT_USER"
 
-if [[ -n "$STUDENT_PASSWORD" ]]; then
-  [[ "$STUDENT_PASSWORD" != *$'\n'* ]] || die "STUDENT_PASSWORD cannot contain newlines."
-  [[ "$STUDENT_PASSWORD" != *$'\r'* ]] || die "STUDENT_PASSWORD cannot contain carriage returns."
-  printf '%s:%s\n' "$STUDENT_USER" "$STUDENT_PASSWORD" | chpasswd
-  echo "Student password set via STUDENT_PASSWORD."
-elif [[ "$STUDENT_CREATED" -eq 1 ]]; then
-  die "STUDENT_PASSWORD is required when creating new user '${STUDENT_USER}'."
+  if [[ -n "$STUDENT_PASSWORD" ]]; then
+    [[ "$STUDENT_PASSWORD" != *$'\n'* ]] || die "STUDENT_PASSWORD cannot contain newlines."
+    [[ "$STUDENT_PASSWORD" != *$'\r'* ]] || die "STUDENT_PASSWORD cannot contain carriage returns."
+    printf '%s:%s\n' "$STUDENT_USER" "$STUDENT_PASSWORD" | chpasswd
+    echo "Student password set via STUDENT_PASSWORD."
+  elif [[ "$STUDENT_CREATED" -eq 1 ]]; then
+    die "STUDENT_PASSWORD is required when creating new user '${STUDENT_USER}'."
+  else
+    echo "No STUDENT_PASSWORD provided; keeping existing password for '${STUDENT_USER}'."
+  fi
 else
-  echo "No STUDENT_PASSWORD provided; keeping existing password for '${STUDENT_USER}'."
+  echo "Skipping step 2 because BUILD_START_STEP=${BUILD_START_STEP}."
 fi
 
 echo "=== [3/10] Enable SSH password + keyboard-interactive auth ==="
-SSH_DROPIN="/etc/ssh/sshd_config.d/99-splunk-training.conf"
-install -d -m 755 /etc/ssh/sshd_config.d
-cat > "$SSH_DROPIN" <<'EOF'
+if should_run_step 3; then
+  SSH_DROPIN="/etc/ssh/sshd_config.d/50-splunk-training.conf"
+  install -d -m 755 /etc/ssh/sshd_config.d
+  rm -f /etc/ssh/sshd_config.d/99-splunk-training.conf
+  cat > "$SSH_DROPIN" <<'EOF'
 PasswordAuthentication yes
 KbdInteractiveAuthentication yes
 EOF
-sshd -t
-echo "SSH config validated (applies on ssh service restart or reboot)."
+  sshd -t
+  echo "SSH config validated (applies on ssh service restart or reboot)."
+else
+  echo "Skipping step 3 because BUILD_START_STEP=${BUILD_START_STEP}."
+fi
 
 echo "=== [4/10] Verify TLS cert inputs ==="
-[[ -f "$CERT_CHAIN_SRC" ]] || die "Missing cert chain file: $CERT_CHAIN_SRC"
-[[ -f "$CERT_KEY_SRC" ]] || die "Missing cert key file: $CERT_KEY_SRC"
+if should_run_step 4; then
+  [[ -f "$CERT_CHAIN_SRC" ]] || die "Missing cert chain file: $CERT_CHAIN_SRC"
+  [[ -f "$CERT_KEY_SRC" ]] || die "Missing cert key file: $CERT_KEY_SRC"
+else
+  echo "Skipping step 4 because BUILD_START_STEP=${BUILD_START_STEP}."
+fi
 
 echo "=== [5/10] Install TLS certs to ${CERT_DST_DIR} ==="
-install -d -m 700 "$CERT_DST_DIR"
-install -m 600 "$CERT_CHAIN_SRC" "${CERT_DST_DIR}/ib-fullchain.pem"
-install -m 600 "$CERT_KEY_SRC" "${CERT_DST_DIR}/ib-privkey.pem"
+if should_run_step 5; then
+  install -d -m 700 "$CERT_DST_DIR"
+  install -m 600 "$CERT_CHAIN_SRC" "${CERT_DST_DIR}/ib-fullchain.pem"
+  install -m 600 "$CERT_KEY_SRC" "${CERT_DST_DIR}/ib-privkey.pem"
+else
+  echo "Skipping step 5 because BUILD_START_STEP=${BUILD_START_STEP}."
+fi
 
 echo "=== [6/10] Download Splunk tarball ==="
-rm -f "$SPLUNK_TGZ_PATH"
-wget "$SPLUNK_TGZ_URL" -O "$SPLUNK_TGZ_PATH"
+if should_run_step 6; then
+  rm -f "$SPLUNK_TGZ_PATH"
+  wget -O "$SPLUNK_TGZ_PATH" "$SPLUNK_TGZ_URL"
+else
+  echo "Skipping step 6 because BUILD_START_STEP=${BUILD_START_STEP}."
+fi
 
 echo "=== [7/10] Install Splunk under ${SPLUNK_HOME} ==="
-if [[ ! -d "$SPLUNK_HOME" ]]; then
-  mkdir -p /opt
-  tar xvf "$SPLUNK_TGZ_PATH" -C /opt
+if should_run_step 7; then
+  if [[ ! -d "$SPLUNK_HOME" ]]; then
+    mkdir -p /opt
+    tar xf "$SPLUNK_TGZ_PATH" -C /opt
+  else
+    echo "Directory ${SPLUNK_HOME} already exists; skipping untar."
+  fi
+  [[ -x "${SPLUNK_HOME}/bin/splunk" ]] || die "Splunk binary not found at ${SPLUNK_HOME}/bin/splunk"
 else
-  echo "Directory ${SPLUNK_HOME} already exists; skipping untar."
+  echo "Skipping step 7 because BUILD_START_STEP=${BUILD_START_STEP}."
 fi
-[[ -x "${SPLUNK_HOME}/bin/splunk" ]] || die "Splunk binary not found at ${SPLUNK_HOME}/bin/splunk"
 
 echo "=== [8/10] Force Splunk to run as root ==="
-LAUNCH_CONF="${SPLUNK_HOME}/etc/splunk-launch.conf"
-if [[ -f "$LAUNCH_CONF" ]] && grep -q '^SPLUNK_OS_USER=' "$LAUNCH_CONF"; then
-  sed -i 's/^SPLUNK_OS_USER=.*/SPLUNK_OS_USER=root/' "$LAUNCH_CONF"
+if should_run_step 8; then
+  LAUNCH_CONF="${SPLUNK_HOME}/etc/splunk-launch.conf"
+  if [[ -f "$LAUNCH_CONF" ]] && grep -q '^SPLUNK_OS_USER=' "$LAUNCH_CONF"; then
+    sed -i 's/^SPLUNK_OS_USER=.*/SPLUNK_OS_USER=root/' "$LAUNCH_CONF"
+  else
+    echo "SPLUNK_OS_USER=root" >> "$LAUNCH_CONF"
+  fi
 else
-  echo "SPLUNK_OS_USER=root" >> "$LAUNCH_CONF"
+  echo "Skipping step 8 because BUILD_START_STEP=${BUILD_START_STEP}."
 fi
 
 echo "=== [9/10] Configure Splunk Web TLS + serverName ==="
-WEB_CONF="${SPLUNK_HOME}/etc/system/local/web.conf"
-SERVER_CONF="${SPLUNK_HOME}/etc/system/local/server.conf"
+if should_run_step 9; then
+  WEB_CONF="${SPLUNK_HOME}/etc/system/local/web.conf"
+  SERVER_CONF="${SPLUNK_HOME}/etc/system/local/server.conf"
 
-set_splunk_conf_value "$WEB_CONF" "settings" "enableSplunkWebSSL" "true"
-set_splunk_conf_value "$WEB_CONF" "settings" "httpport" "$SPLUNK_WEB_PORT"
-set_splunk_conf_value "$WEB_CONF" "settings" "serverCert" "${CERT_DST_DIR}/ib-fullchain.pem"
-set_splunk_conf_value "$WEB_CONF" "settings" "privKeyPath" "${CERT_DST_DIR}/ib-privkey.pem"
-set_splunk_conf_value "$SERVER_CONF" "general" "serverName" "$SPLUNK_SERVER_NAME"
-
-echo "=== [10/10] Start Splunk and enable boot-start ==="
-if splunk_is_running; then
-  echo "Splunk is already running."
+  set_splunk_conf_value "$WEB_CONF" "settings" "enableSplunkWebSSL" "true"
+  set_splunk_conf_value "$WEB_CONF" "settings" "httpport" "$SPLUNK_WEB_PORT"
+  set_splunk_conf_value "$WEB_CONF" "settings" "serverCert" "${CERT_DST_DIR}/ib-fullchain.pem"
+  set_splunk_conf_value "$WEB_CONF" "settings" "privKeyPath" "${CERT_DST_DIR}/ib-privkey.pem"
+  set_splunk_conf_value "$SERVER_CONF" "general" "serverName" "$SPLUNK_SERVER_NAME"
 else
-  "${SPLUNK_HOME}/bin/splunk" start --accept-license --answer-yes --no-prompt --seed-passwd "$SPLUNK_ADMIN_PASSWORD"
+  echo "Skipping step 9 because BUILD_START_STEP=${BUILD_START_STEP}."
 fi
 
-"${SPLUNK_HOME}/bin/splunk" enable boot-start -user root --accept-license --answer-yes --no-prompt
+echo "=== [10/10] Start Splunk and enable boot-start ==="
+if should_run_step 10; then
+  if splunk_is_running; then
+    echo "Splunk is already running."
+  else
+    "${SPLUNK_HOME}/bin/splunk" start --accept-license --answer-yes --no-prompt --seed-passwd "$SPLUNK_ADMIN_PASSWORD"
+  fi
+
+  "${SPLUNK_HOME}/bin/splunk" enable boot-start -user root --accept-license --answer-yes --no-prompt
+else
+  echo "Skipping step 10 because BUILD_START_STEP=${BUILD_START_STEP}."
+fi
 
 echo
 echo "Build complete."
