@@ -211,6 +211,10 @@ if should_run_step 3; then
 PasswordAuthentication yes
 KbdInteractiveAuthentication yes
 EOF
+  # /run is volatile, and an openssh-server upgrade can leave this directory
+  # absent until systemd starts ssh.service again. sshd -t requires it even
+  # when only validating the configuration.
+  install -d -o root -g root -m 755 /run/sshd
   sshd -t
   echo "SSH config validated (applies on ssh service restart or reboot)."
 else

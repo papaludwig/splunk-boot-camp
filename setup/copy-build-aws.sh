@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 EC2_HOST=""
 SSH_USER="ubuntu"
-SSH_KEY="${HOME}/Downloads/cpl.pem"
+SSH_KEY="${HOME}/Documents/aws/myhosts.pem"
 
 LOCAL_CHAIN="${HOME}/ib-fullchain.pem"
 LOCAL_KEY="${HOME}/ib-privkey.pem"

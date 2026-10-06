@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SSH_USER="ubuntu"
-SSH_KEY="${HOME}/Downloads/cpl.pem"
+SSH_KEY="${HOME}/Documents/aws/myhosts.pem"
 EC2_HOST=""
 
 DESTINATIONS_APP_DIR="${DESTINATIONS_APP_DIR:-/opt/splunk/etc/apps/destinations}"
